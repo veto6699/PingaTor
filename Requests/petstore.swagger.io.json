@@ -1,0 +1,9 @@
+{
+	"Period": 3000,
+	"HTTPCode": 200,
+	"Timeout": 60000,
+	"URL": "https://petstore.swagger.io/v2/store/order",
+	"Request": "{\"id\": 0,\"petId\": 9223372036854770000,\"quantity\": 0,\"shipDate\": \"2023-12-13T07:03:31.491Z\",\"status\": \"placed\",\"complete\": true}",
+	"FileAction": "httpsservice.socmedica.dev9004infoTech.bat",
+	"Reference": "{\"id\": 58570186,\"petId\": 9223372036854770000,\"quantity\": 0,\"shipDate\": \"2023-12-13T07:03:31.491+0000\",\"status\": \"placed\",\"complete\": true}"
+}

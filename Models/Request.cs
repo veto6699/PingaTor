@@ -11,13 +11,14 @@ namespace PingaTor.Models
 {
     internal class Request
     {
-        readonly Notification notification;
-        readonly string name;
-        readonly string reference;
-        readonly Uri url;
-        readonly HttpContent request;
-        readonly string? fileAction;
-        readonly ushort statusCode = 200;
+        readonly Notification _notification;
+        readonly string _name;
+        readonly List<string>? _responseFragments;
+        readonly Uri _url;
+        readonly HttpMethod _method;
+        readonly string? _fileAction;
+        readonly HttpStatusCode _statusCode = HttpStatusCode.OK;
+        readonly HttpContent? _httpContent;
 
         readonly HttpClient client;
 
@@ -30,25 +31,38 @@ namespace PingaTor.Models
 
             try
             {
-                url = new Uri(setting.URL);
+                _url = new Uri(setting.URL);
             }
             catch (Exception ex)
             {
                 throw new ArgumentException($"URL not valud {ex.Message}");
             }
 
-            try
+            if (string.IsNullOrWhiteSpace(setting.Method))
+                throw new ArgumentException("Method is empty");
+            else
+                _method = new(setting.Method);
+
+            if (_method != HttpMethod.Get)
             {
-                request = new StringContent(setting.Request);
-                request.Headers.ContentType = MediaTypeHeaderValue.Parse("application/json");
-            }
-            catch (Exception ex)
-            {
-                throw new ArgumentException($"Requestnot valud {ex.Message}");
+                try
+                {
+                    _httpContent = new StringContent(setting.Request);
+                    _httpContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/json");
+                }
+                catch (Exception ex)
+                {
+                    throw new ArgumentException($"Request not valud {ex.Message}");
+                }
             }
 
-            if (setting.HTTPCode > 0) 
-                statusCode = setting.HTTPCode;
+            if (setting.HTTPCode > 0)
+            {
+                string code = setting.HTTPCode.ToString();
+
+                if (Enum.IsDefined(typeof(HttpStatusCode), code))
+                    _statusCode = (HttpStatusCode)Enum.Parse(typeof(HttpStatusCode), code);
+            }
 
             if (setting.Timeout != 0)
             {
@@ -67,15 +81,23 @@ namespace PingaTor.Models
                 client = new HttpClient(socketsHandler);
             }
 
-            if (!string.IsNullOrWhiteSpace(setting.Reference))
-                reference = setting.Reference.Replace(": ", ":");
+            if (setting.ResponseFragments is not null && setting.ResponseFragments.Count > 0)
+            {
+                _responseFragments = new();
+
+                foreach (var fragment in setting.ResponseFragments)
+                {
+                    if (!string.IsNullOrWhiteSpace(fragment))
+                        _responseFragments.Add(fragment);
+                }
+            }
 
             if (File.Exists($"{pathAction}\\{setting.FileAction}"))
-                fileAction = setting.FileAction;
+                _fileAction = setting.FileAction;
 
-            name = setting.NameRequest;
+            _name = setting.NameRequest;
 
-            this.notification = notification;
+            _notification = notification;
 
             Check();
             timer = new System.Timers.Timer(setting.Period);
@@ -92,59 +114,86 @@ namespace PingaTor.Models
         async void Check()
         {
             StringBuilder text = new();
-            text.Append($"{name}: ");
+            text.Append($"{_name}: ");
             bool needTelegramSend = false;
+            HttpResponseMessage? response = null;
+            string? rezult = null;
 
-            using (var response = await client.PostAsync(url, request))
+            HttpRequestMessage _request = new(_method, _url)
             {
-                if ((ushort)response.StatusCode != statusCode)
+                Content = _httpContent
+            };
+
+            try
+            {
+                response = await client.SendAsync(_request);
+            }
+            catch (Exception ex)
+            {
+                needTelegramSend = true;
+                rezult = ex.Message;
+            }
+
+            if (response?.StatusCode != _statusCode)
+            {
+                text.Append($"Response Status Code = {response.StatusCode}({(int)response.StatusCode})");
+                needTelegramSend = true;
+
+                if (_fileAction is not null)
+                    Utils.RunFile(_fileAction);
+            }
+
+            if (rezult is null)
+                rezult = await response.Content.ReadAsStringAsync();
+
+            if (_responseFragments is not null)
+            {
+                foreach (var fragment in _responseFragments)
                 {
-                    text.Append($"Response Status Code = {response.StatusCode}({(int)response.StatusCode})");
-                    needTelegramSend = true;
-
-                    if (fileAction is not null)
-                        Utils.RunFile(fileAction);
-                }
-
-                var rezult = await response.Content.ReadAsStringAsync();
-
-                if (reference is not null && rezult != reference)
-                {
-                    needTelegramSend = true;
-                    if (string.IsNullOrWhiteSpace(rezult))
-                        text.Append("пустой ответ");
-                    else
-                        text.Append(rezult);
-
-                    if ((ushort)response.StatusCode != statusCode && fileAction is not null)
-                        Utils.RunFile(fileAction);
-                }
-                else if ((ushort)response.StatusCode == statusCode)
-                {
-                    text.Append("Ok");
-                }
-
-                if (needTelegramSend)
-                {
-                    var requestString = await request.ReadAsStringAsync();
-
-                    string telegramFile = url.ToString() + Environment.NewLine + Environment.NewLine + "Запрос" + Environment.NewLine + requestString;
-
-                    if (!string.IsNullOrEmpty(rezult))
+                    if (!rezult.Contains(fragment))
                     {
-                        telegramFile += Environment.NewLine + Environment.NewLine + "Ответ" + Environment.NewLine + rezult;
+                        needTelegramSend = true;
+                        if (string.IsNullOrWhiteSpace(rezult))
+                            text.Append("пустой ответ");
+                        else
+                            text.Append(rezult);
+
+                        if (response.StatusCode != _statusCode && _fileAction is not null)
+                            Utils.RunFile(_fileAction);
+
+                        break;
                     }
-
-                    string message;
-                    if ((ushort)response.StatusCode != statusCode)
-                        message = "Bad request " + (int)response.StatusCode;
-                    else
-                        message = "Bad request reference not equal response";
-
-                    await notification.SendTextAndFile(Notification.Type.Service, Notification.Level.Error, message, telegramFile, "file.txt");
-
                 }
             }
+            else if (response.StatusCode == _statusCode)
+            {
+                text.Append("Ok");
+            }
+
+            if (needTelegramSend)
+            {
+                string? requestString = null;
+
+                if (_request.Content is not null)
+                    requestString = await _request.Content.ReadAsStringAsync();
+
+                string telegramFile = _request?.RequestUri?.ToString() + Environment.NewLine + Environment.NewLine + "Запрос" + Environment.NewLine + requestString;
+
+                if (!string.IsNullOrEmpty(rezult))
+                {
+                    telegramFile += Environment.NewLine + Environment.NewLine + "Ответ" + Environment.NewLine + rezult;
+                }
+
+                string message;
+                if (response.StatusCode != _statusCode)
+                    message = "Bad request " + (int)response.StatusCode;
+                else
+                    message = "Bad request reference not equal response";
+
+                await _notification.SendTextAndFile(Notification.Type.Service, Notification.Level.Error, message, telegramFile, "file.txt");
+            }
+
+            response?.Dispose();
 
             Utils.WriteLine(text.ToString());
         }

@@ -26,6 +26,10 @@ namespace PingaTor.Models
         /// </summary>
         public string URL { get; set; }
         /// <summary>
+        /// Метод отправки
+        /// </summary>
+        public string Method { get; set; }
+        /// <summary>
         /// Запрос в формате JSON
         /// </summary>
         public string Request { get; set; }
@@ -40,6 +44,30 @@ namespace PingaTor.Models
         /// <summary>
         /// Эталон ответа
         /// </summary>
-        public string Reference { get; set; }
+        [Obsolete("Теперь нужно использовать ResponseFragments")]
+        public string? Reference
+        {
+            get
+            {
+                if (ResponseFragments is null)
+                    return null;
+                else
+                    return ResponseFragments[0];
+            }
+            set
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    if (ResponseFragments is null)
+                        ResponseFragments = new List<string>(1) { value };
+                    else
+                        ResponseFragments[0].Insert(0, value);
+                }
+            }
+        }
+        /// <summary>
+        /// Набор фрагментов ответа которые должны быть в эталонном ответе
+        /// </summary>
+        public List<string> ResponseFragments { get; set; }
     }
 }

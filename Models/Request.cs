@@ -12,6 +12,7 @@ namespace PingaTor.Models
     internal class Request
     {
         readonly Notification _notification;
+
         readonly string _name;
         readonly List<string>? _responseFragments;
         readonly Uri _url;
@@ -20,9 +21,11 @@ namespace PingaTor.Models
         readonly HttpStatusCode _statusCode = HttpStatusCode.OK;
         readonly HttpContent? _httpContent;
 
-        readonly HttpClient client;
+        Exception _exception;
 
-        System.Timers.Timer timer;
+        readonly HttpClient _client;
+
+        System.Timers.Timer _timer;
 
         public Request(RequestSetting setting, Notification notification, string pathAction)
         {
@@ -70,7 +73,7 @@ namespace PingaTor.Models
                 {
                     ConnectTimeout = TimeSpan.FromMilliseconds(setting.Timeout),
                 };
-                client = new HttpClient(socketsHandler);
+                _client = new HttpClient(socketsHandler);
             }
             else
             {
@@ -78,7 +81,7 @@ namespace PingaTor.Models
                 {
                     ConnectTimeout = TimeSpan.FromMinutes(5),
                 };
-                client = new HttpClient(socketsHandler);
+                _client = new HttpClient(socketsHandler);
             }
 
             if (setting.ResponseFragments is not null && setting.ResponseFragments.Count > 0)
@@ -100,10 +103,10 @@ namespace PingaTor.Models
             _notification = notification;
 
             Check();
-            timer = new System.Timers.Timer(setting.Period);
-            timer.Elapsed += Check;
-            timer.AutoReset = true;
-            timer.Enabled = true;
+            _timer = new System.Timers.Timer(setting.Period);
+            _timer.Elapsed += Check;
+            _timer.AutoReset = true;
+            _timer.Enabled = true;
         }
 
         void Check(object source, ElapsedEventArgs e)
@@ -117,7 +120,6 @@ namespace PingaTor.Models
             text.Append($"{_name}: ");
             bool needTelegramSend = false;
             HttpResponseMessage? response = null;
-            string? rezult = null;
 
             HttpRequestMessage _request = new(_method, _url)
             {
@@ -126,15 +128,16 @@ namespace PingaTor.Models
 
             try
             {
-                response = await client.SendAsync(_request);
+                response = await _client.SendAsync(_request);
             }
             catch (Exception ex)
             {
                 needTelegramSend = true;
-                rezult = ex.Message;
+                _exception = ex;
+                text.Append(ex.Message);
             }
 
-            if (response?.StatusCode != _statusCode)
+            if (response is not null && response.StatusCode != _statusCode)
             {
                 text.Append($"Response Status Code = {response.StatusCode}({(int)response.StatusCode})");
                 needTelegramSend = true;
@@ -143,10 +146,12 @@ namespace PingaTor.Models
                     Utils.RunFile(_fileAction);
             }
 
-            if (rezult is null)
+            string? rezult = null;
+
+            if (_exception is null)
                 rezult = await response.Content.ReadAsStringAsync();
 
-            if (_responseFragments is not null)
+            if (_responseFragments is not null && rezult is not null)
             {
                 foreach (var fragment in _responseFragments)
                 {
@@ -165,7 +170,7 @@ namespace PingaTor.Models
                     }
                 }
             }
-            else if (response.StatusCode == _statusCode)
+            else if (response is not null && response.StatusCode == _statusCode)
             {
                 text.Append("Ok");
             }
@@ -180,12 +185,12 @@ namespace PingaTor.Models
                 string telegramFile = _request?.RequestUri?.ToString() + Environment.NewLine + Environment.NewLine + "Запрос" + Environment.NewLine + requestString;
 
                 if (!string.IsNullOrEmpty(rezult))
-                {
                     telegramFile += Environment.NewLine + Environment.NewLine + "Ответ" + Environment.NewLine + rezult;
-                }
+                else if(_exception is not null)
+                    telegramFile += Environment.NewLine + Environment.NewLine + "Ответ" + Environment.NewLine + _exception;
 
                 string message;
-                if (response.StatusCode != _statusCode)
+                if (response is not null && response.StatusCode != _statusCode)
                     message = "Bad request " + (int)response.StatusCode;
                 else
                     message = "Bad request reference not equal response";
@@ -200,7 +205,7 @@ namespace PingaTor.Models
 
         public void Finish()
         {
-            timer.Stop();
+            _timer.Stop();
         }
     }
 }
